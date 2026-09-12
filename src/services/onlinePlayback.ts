@@ -1,28 +1,53 @@
 import { LyricData, OnlineLyricsState, ReplayGainInfo, SongResult } from '../types';
 import { saveToCache } from './db';
-import { PrefetchedSongData, isUrlValid, updatePrefetchedAudioUrl } from './prefetchService';
+import { PrefetchedSongData, invalidatePrefetchedAudioUrl, isUrlValid, updatePrefetchedAudioUrl } from './prefetchService';
 import { isPureMusicLyricText } from '../utils/lyrics/pureMusic';
 import { migrateLyricDataRenderHints } from '../utils/lyrics/renderHints';
 import { loadOnlineLyricsState, markOnlineLyricsPureMusic, resolveOnlineLyrics, saveOnlineLyricsState } from '../utils/onlineLyricsState';
 import { autoMatchBestLyric } from '../utils/lyrics/autoMatchBestLyric';
 import { createSafeObjectUrl } from '../utils/blobGuards';
-import type { AudioQualityPreference, MediaId } from '../types/onlineMusic';
+import type { AudioQualityPreference, AudioSourceOptions, MediaId, OnlinePlaybackRoute } from '../types/onlineMusic';
 import { omni } from './onlineMusic/omni';
 import { getSongResourceCacheKey } from './onlineMusic/resourceKeys';
 import { getCachedSongAudioBlob, getCachedSongReplayGain, getSongCacheWithLegacyMigration } from './onlineMusic/resourceCache';
 import { toSafePlaybackUrl } from '../utils/appPlaybackHelpers';
 import { getProviderSongMetadata } from './onlineMusic/songMetadata';
+import { getPlaybackSongKey } from '../utils/appPlaybackGuards';
 import { useLyricSettingsStore } from '../stores/useLyricSettingsStore';
+
+let audioLoadController: AbortController | undefined;
+let audioResolution: { key: string; requestKey?: string; url: string; route: OnlinePlaybackRoute; failed: OnlinePlaybackRoute[] } | undefined;
+
+export function cancelOnlineAudioLoad(): void { audioLoadController?.abort(); }
+
+// Recovery excludes suppliers already rejected by the audio element, not just expired signed URLs.
+export function getOnlineAudioRecoveryOptions(song: SongResult, refreshOnly = false): AudioSourceOptions {
+    invalidatePrefetchedAudioUrl(song);
+    if (!audioResolution || audioResolution.key !== getPlaybackSongKey(song)
+        || audioResolution.requestKey !== omni.getAudioRequestKey(song)) return {};
+    if (!refreshOnly && !audioResolution.failed.includes(audioResolution.route)) audioResolution.failed.push(audioResolution.route);
+    return { excludeRoutes: [...audioResolution.failed] };
+}
 
 export async function loadOnlineSongAudioSource(
     song: SongResult,
     audioQuality: AudioQualityPreference,
-    prefetched: PrefetchedSongData | null
+    prefetched: PrefetchedSongData | null,
+    options: AudioSourceOptions & { skipCache?: boolean } = {},
 ): Promise<
-    | { kind: 'ok'; audioSrc: string; blobUrl?: string; replayGain?: ReplayGainInfo }
+    | { kind: 'ok'; audioSrc: string; blobUrl?: string; replayGain?: ReplayGainInfo; fallbackRoute?: OnlinePlaybackRoute }
     | { kind: 'unavailable' }
 > {
-    const cachedAudioBlob = await getCachedSongAudioBlob(song);
+    cancelOnlineAudioLoad();
+    audioLoadController = new AbortController();
+    const signal = options.signal ? AbortSignal.any([options.signal, audioLoadController.signal]) : audioLoadController.signal;
+    signal.throwIfAborted();
+    const audioRequestKey = omni.getAudioRequestKey(song);
+    const recordSource = (url: string, route: OnlinePlaybackRoute = 'native', failed = [...options.excludeRoutes ?? []]) => {
+        audioResolution = { key: getPlaybackSongKey(song), requestKey: audioRequestKey, url, route, failed };
+    };
+    const cachedAudioBlob = options.skipCache ? null : await getCachedSongAudioBlob(song);
+    signal.throwIfAborted();
     if (cachedAudioBlob) {
         const blobUrl = createSafeObjectUrl(cachedAudioBlob);
         if (blobUrl) {
@@ -33,33 +58,44 @@ export async function loadOnlineSongAudioSource(
                 replayGain = await getCachedSongReplayGain(song);
                 if (replayGain) console.log(`[Cache] ReplayGain recovered for "${song.name}" from the store, not the provider`);
             }
+            if (signal.aborted) {
+                URL.revokeObjectURL(blobUrl);
+                signal.throwIfAborted();
+            }
             return { kind: 'ok', audioSrc: blobUrl, blobUrl, replayGain };
         }
     }
 
-    if (prefetched?.audioUrl && prefetched.audioUrl !== 'CACHED_IN_DB' && isUrlValid(prefetched.audioUrlFetchedAt)) {
+    if (!options.skipCache && prefetched?.audioUrl && prefetched.audioUrl !== 'CACHED_IN_DB' && isUrlValid(prefetched.audioUrlFetchedAt, prefetched.audioUrlExpiresAt)
+        && prefetched.audioRequestKey === audioRequestKey && prefetched.audioUrlQuality === audioQuality
+        && !options.excludeRoutes?.includes(prefetched.resolvedRoute ?? 'native')) {
+        recordSource(prefetched.audioUrl, prefetched.resolvedRoute, prefetched.failedRoutes);
         return {
             kind: 'ok',
             audioSrc: prefetched.audioUrl,
             replayGain: song.replayGain ?? prefetched.replayGain,
+            fallbackRoute: prefetched.fallbackUsed ? prefetched.resolvedRoute : undefined,
         };
     }
 
     let source = null;
     try {
-        source = await omni.getAudioSource(song, audioQuality);
+        source = await omni.getAudioSource(song, audioQuality, { ...options, signal });
     } catch (error) {
+        signal.throwIfAborted();
         console.warn('[OnlinePlayback] Provider audio source is temporarily unavailable', error);
         return { kind: 'unavailable' };
     }
+    signal.throwIfAborted();
     const url = toSafePlaybackUrl(source?.url);
-    if (!url) {
+    if (!url || audioRequestKey !== omni.getAudioRequestKey(song)) {
         return { kind: 'unavailable' };
     }
 
     const replayGain = applyOnlineAudioSourceMetadata(song, source?.replayGain).replayGain;
-    updatePrefetchedAudioUrl(song, url, audioQuality, replayGain);
-    return { kind: 'ok', audioSrc: url, replayGain };
+    recordSource(url, source?.resolvedRoute, source?.failedRoutes);
+    updatePrefetchedAudioUrl(song, url, audioQuality, replayGain, source ?? undefined);
+    return { kind: 'ok', audioSrc: url, replayGain, fallbackRoute: source?.fallbackUsed ? source.resolvedRoute : undefined };
 }
 
 export const applyOnlineAudioSourceMetadata = (

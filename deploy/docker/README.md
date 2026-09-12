@@ -72,6 +72,8 @@ docker compose ps
 | `FOLIA_AI_PROVIDER` | `google` | `google`、`gemini` 或 `openai`；同时决定前端调用哪个主题端点、backend 歌词分词接哪家模型 |
 | `FOLIA_FORWARD_CLIENT_IP` | `false` | 是否把浏览器 IP 转发给音乐平台；保持 `false` 可避免 LAN/Docker 地址出现在登录地点 |
 | `ENABLE_GENERAL_UNBLOCK` | `false` | 网易云 API 通用解锁开关；默认关闭 |
+| `CHKSZ_API_KEY` | 空 | 可选，仅 backend 使用；开启 ChKSz 网易云音频回退 |
+| `LINGLAN_API_KEY` | 空 | 可选，仅 backend 使用；开启聆澜的网易云、酷狗、QQ 音频回退 |
 | `QQ_AUTH_SESSION_PATH` / `QQ_SESSION_SECRET` | 空 | 两项同时设置后，把 QQ 登录态加密保存到 `qq-api-state` 卷；配置方法见 [`qq-api/README.md`](./qq-api/README.md) |
 | `FOLIA_SYNC_BIND` / `FOLIA_SYNC_PORT` | `0.0.0.0` / `13000` | Sync Server 监听 |
 | `FOLIA_SYNC_DATA_DIR` | `./data/sync` | SQLite 持久化目录 |
@@ -85,6 +87,18 @@ docker compose up -d --force-recreate gateway backend
 ```
 
 网易云和酷狗镜像默认不把浏览器或 Docker 私网地址写入上游请求，音乐平台会根据连接本身识别 NAS 的公网出口。只有兼容旧部署行为时才应设置 `FOLIA_FORWARD_CLIENT_IP=true`；这可能使登录记录显示为“局域网”或“未知”。QQ 音乐镜像不转发浏览器 IP，因此不受该开关影响。
+
+## 多平台搜索与外部音频回退
+
+将密钥填入部署目录 `.env` 的 `CHKSZ_API_KEY`，然后执行 `docker compose up -d --force-recreate backend` 并刷新网页。镜像必须包含此功能；尚未发布时先按下方“本地镜像验证”从源码构建 gateway 和 backend。不要给变量添加 `VITE_` 前缀，也不要将实际密钥写进源码、示例或分享 `docker compose config` 的完整输出。
+
+`/api/chksz/status` 和 `/api/linglan/status` 只公开配置状态与支持能力。把聆澜密钥填入部署目录 `.env` 的 `LINGLAN_API_KEY` 后，重新创建 backend 并刷新页面。密钥只在服务端使用，不加 `VITE_` 前缀、不写入源码。
+
+搜索独立提供聚合、网易云、酷狗和 QQ，默认聚合并记住选择，不随账号切换。搜索仅使用各平台已有接口，ChKSz 与聆澜不参与搜索。聚合结果标明平台，失败的平台可单独重试。
+
+网易云公开歌曲已登录时依次尝试用户账号、ChKSz、聆澜；未登录时直接尝试 ChKSz、聆澜，避免匿名试听链接。酷狗和 QQ 依次尝试原平台、聆澜。未配置的音源自动跳过，私人云盘只使用原平台。预取、队列恢复和音频加载失败使用同一回退顺序；歌词、收藏和歌单操作仍使用歌曲所属平台。
+
+密钥只在 backend 请求固定上游端点时使用，不传入浏览器，也不向外部音源转发用户 Cookie。具有网站访问权限的访客均可使用已配置音源，调用共用部署者的音源配额。首版适配聆澜赞助版的网易云、酷狗和 QQ，音质使用现有四档；不导入或执行 LX 脚本。
 
 ## QQ 音乐服务
 

@@ -25,6 +25,7 @@ type UsePlaybackTransportControllerParams = {
     getTargetPlaybackVolume: () => number;
     shouldRefreshCurrentOnlineAudioSource: () => boolean;
     recoverOnlinePlaybackSource: (options: {
+        refreshOnly?: boolean;
         failedSrc?: string | null;
         resumeAt?: number;
         autoplay: boolean;
@@ -90,6 +91,7 @@ export function usePlaybackTransportController({
         syncOutputGain(getTargetPlaybackVolume(), 0);
         if (shouldRefreshCurrentOnlineAudioSource()) {
             const refreshed = await recoverOnlinePlaybackSource({
+                refreshOnly: true,
                 failedSrc: audioRef.current.currentSrc || audioSrc,
                 resumeAt: audioRef.current.currentTime,
                 autoplay: true,

@@ -46,6 +46,8 @@ services:
       OPENAI_API_URL: ${OPENAI_API_URL:-https://api.openai.com/v1}
       OPENAI_API_MODEL: ${OPENAI_API_MODEL:-gpt-5.6-luna}
       OPENAI_API_TEMPERATURE: ${OPENAI_API_TEMPERATURE:-0.7}
+      CHKSZ_API_KEY: ${CHKSZ_API_KEY:-}
+      LINGLAN_API_KEY: ${LINGLAN_API_KEY:-}
     expose:
       - "3000"
     tmpfs:

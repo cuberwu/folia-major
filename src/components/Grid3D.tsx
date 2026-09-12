@@ -186,20 +186,24 @@ export const Grid3D: React.FC<Grid3DProps> = (props) => {
     const activeProviderLabel = activeProviderSummary?.shortName
         || activeProviderSummary?.displayName
         || omni.getProviderLabel(activeProviderId);
+    const activeUser = activeProviderSummary?.user
+        || (activeProviderId === 'netease' ? user : null);
     const canUseOnlinePlaylists = activeProviderCapabilities.userLibrary && activeProviderCapabilities.playlists;
-    const canUseOnlineAlbums = activeProviderCapabilities.userLibrary && Boolean(activeProviderCapabilities.userAlbums);
-    const canUseOnlineRadio = activeProviderCapabilities.recommendations;
+    const canUseOnlineAlbums = Boolean(activeUser) && activeProviderCapabilities.userLibrary && Boolean(activeProviderCapabilities.userAlbums);
+    const canUseOnlineRadio = Boolean(activeUser) && activeProviderCapabilities.recommendations;
     const playlistUnavailableReason = canUseOnlinePlaylists
         ? undefined
         : t('status.providerLibraryUnavailable', { provider: activeProviderLabel });
-    const albumsUnavailableReason = canUseOnlineAlbums
-        ? undefined
-        : t('status.providerUserAlbumsUnavailable', { provider: activeProviderLabel });
-    const radioUnavailableReason = canUseOnlineRadio
-        ? undefined
-        : t('status.providerRecommendationsUnavailable', { provider: activeProviderLabel });
-    const activeUser = activeProviderSummary?.user
-        || (activeProviderId === 'netease' ? user : null);
+    const albumsUnavailableReason = !activeUser
+        ? t('home.pleaseLogin')
+        : canUseOnlineAlbums
+            ? undefined
+            : t('status.providerUserAlbumsUnavailable', { provider: activeProviderLabel });
+    const radioUnavailableReason = !activeUser
+        ? t('home.pleaseLogin')
+        : canUseOnlineRadio
+            ? undefined
+            : t('status.providerRecommendationsUnavailable', { provider: activeProviderLabel });
     const activeAccountView = resolveOnlineProviderAccountView({
         provider: activeProviderSummary,
         hasUser: Boolean(activeUser),
@@ -620,7 +624,8 @@ export const Grid3D: React.FC<Grid3DProps> = (props) => {
         const query = searchQuery.trim();
         if (!query) return;
 
-        const searchSource = isOnlineTab ? activeProviderId : resolveSearchSource(homeViewTab);
+        if (isOnlineTab) await omni.initializeSharedSources();
+        const searchSource = isOnlineTab ? useSearchNavigationStore.getState().lastOnlineSearchSource : resolveSearchSource(homeViewTab);
         const didSearch = await submitSearch({
             query,
             sourceTab: searchSource,

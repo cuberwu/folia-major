@@ -785,7 +785,6 @@ export default function App() {
         // from here on. Dropped alongside the prefetch cache they were gathered with, rather than
         // sitting in memory until the tab is closed.
         clearTrackProfileRuntime();
-        useSearchNavigationStore.getState().resetRuntime(nextProviderId);
         useCollectionNavigationStore.getState().clear();
 
         resolve(true);
@@ -1701,8 +1700,8 @@ export default function App() {
     const currentSearchSourceTabInPalette = useMemo(() => resolveCommandPaletteSearchSource(
         currentSong,
         searchSourceTab,
-        onlineProviderPlatform.activeProviderId,
-    ), [currentSong, onlineProviderPlatform.activeProviderId, searchSourceTab]);
+        onlineProviderPlatform.defaultSearchSource,
+    ), [currentSong, onlineProviderPlatform.defaultSearchSource, searchSourceTab, isSearchOpen]);
     const toggleBrowserFullscreen = useCallback(async () => {
         if (typeof window !== 'undefined' && window.electron?.toggleFullscreenWindow) {
             return window.electron.toggleFullscreenWindow();

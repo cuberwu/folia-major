@@ -1,5 +1,5 @@
 import type { Dispatch, MutableRefObject, RefObject, SetStateAction } from 'react';
-import { applyOnlineAudioSourceMetadata, loadOnlineSongAudioSource } from '../../../services/onlinePlayback';
+import { getOnlineAudioRecoveryOptions, applyOnlineAudioSourceMetadata, loadOnlineSongAudioSource } from '../../../services/onlinePlayback';
 import type { SongResult } from '../../../types';
 import type { AudioQualityPreference } from '../../../types/onlineMusic';
 import {
@@ -92,10 +92,12 @@ export const createOnlineRecoveryController = ({
         failedSrc,
         resumeAt,
         autoplay,
+        refreshOnly = false,
     }: {
         failedSrc?: string | null;
         resumeAt?: number;
         autoplay: boolean;
+        refreshOnly?: boolean;
     }): Promise<boolean> => {
         const song = currentSong;
         const audioElement = audioRef.current;
@@ -104,13 +106,17 @@ export const createOnlineRecoveryController = ({
             return false;
         }
 
-        const normalizedFailedSrc = getOnlineRecoveryKey(failedSrc || audioElement.currentSrc || audioSrc || null);
-        if (normalizedFailedSrc && lastAudioRecoverySourceRef.current === normalizedFailedSrc) {
-            return false;
-        }
-
+        // A superseded error is handled: its caller must not skip the newly selected song.
+        if (currentSongRef.current !== getPlaybackSongKey(song)
+            || failedSrc && audioElement.currentSrc && failedSrc !== audioElement.currentSrc) return true;
         if (onlinePlaybackRecoveryRef.current) {
             return onlinePlaybackRecoveryRef.current;
+        }
+
+        const options = getOnlineAudioRecoveryOptions(song, refreshOnly);
+        const normalizedFailedSrc = `${options.excludeRoutes?.join(',') ?? ''}:${getOnlineRecoveryKey(failedSrc || audioElement.currentSrc || audioSrc || null)}`;
+        if (normalizedFailedSrc && lastAudioRecoverySourceRef.current === normalizedFailedSrc) {
+            return false;
         }
 
         const recoveryTask = (async () => {
@@ -119,9 +125,9 @@ export const createOnlineRecoveryController = ({
             }
 
             try {
-                const audioResult = await loadOnlineSongAudioSource(song, audioQuality, null);
+                const audioResult = await loadOnlineSongAudioSource(song, audioQuality, null, { ...options, skipCache: true });
                 if (currentSongRef.current !== getPlaybackSongKey(song) || !audioRef.current) {
-                    return false;
+                    return true;
                 }
 
                 if (audioResult.kind === 'unavailable') {
@@ -160,6 +166,8 @@ export const createOnlineRecoveryController = ({
                 setAudioSrc(audioResult.audioSrc);
                 return true;
             } catch (error) {
+                if (currentSongRef.current !== getPlaybackSongKey(song)
+                    || error instanceof Error && error.name === 'AbortError') return true;
                 console.error('[App] Failed to recover online playback source', error);
                 return false;
             } finally {

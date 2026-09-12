@@ -3,6 +3,13 @@ import { getFromCache, saveToCache } from '../db';
 
 // src/services/onlineMusic/providerStorage.ts
 
+const sessionRevisions = new Map<OnlineProviderId, number>();
+export const getProviderSessionRevision = (providerId: OnlineProviderId): number => sessionRevisions.get(providerId) ?? 0;
+const reviseSession = (providerId: OnlineProviderId, key: string) => {
+    // Creating the anonymous NetEase cookie is part of the first request, not an account change.
+    if (key !== 'anonymous_cookie') sessionRevisions.set(providerId, getProviderSessionRevision(providerId) + 1);
+};
+
 export const getProviderCacheKey = (providerId: OnlineProviderId, key: string): string => (
     `online_provider_${providerId}_${key}`
 );
@@ -50,7 +57,10 @@ export const readProviderSessionValue = (
 };
 
 export const writeProviderSessionValue = (providerId: OnlineProviderId, key: string, value: string): void => {
-    if (typeof localStorage !== 'undefined') localStorage.setItem(getProviderSessionKey(providerId, key), value);
+    if (typeof localStorage !== 'undefined') {
+        if (localStorage.getItem(getProviderSessionKey(providerId, key)) !== value) reviseSession(providerId, key);
+        localStorage.setItem(getProviderSessionKey(providerId, key), value);
+    }
 };
 
 export const removeProviderSessionValue = (
@@ -59,6 +69,7 @@ export const removeProviderSessionValue = (
     legacyKeys: string[] = [],
 ): void => {
     if (typeof localStorage === 'undefined') return;
+    if (readProviderSessionValue(providerId, key, legacyKeys) !== null) reviseSession(providerId, key);
     localStorage.removeItem(getProviderSessionKey(providerId, key));
     legacyKeys.forEach(legacyKey => localStorage.removeItem(legacyKey));
 };

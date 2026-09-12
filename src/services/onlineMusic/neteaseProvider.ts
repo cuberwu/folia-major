@@ -165,6 +165,7 @@ const normalizeNeteaseSongFallback = (raw: unknown): UnifiedSong => {
 };
 
 export const normalizeNeteaseSong = (raw: unknown): UnifiedSong => {
+    const originalRef = (raw as SongResult | null)?.sourceRef;
     const normalized = typeof neteaseApi.normalizeSongResult === 'function'
         ? neteaseApi.normalizeSongResult(raw)
         : normalizeNeteaseSongFallback(raw);
@@ -183,6 +184,7 @@ export const normalizeNeteaseSong = (raw: unknown): UnifiedSong => {
         resourceState: normalized.resourceState,
         privilege: normalized.privilege,
         sourceRef: {
+            ...(originalRef?.kind === 'online' && originalRef.providerId === 'netease' ? originalRef : {}),
             kind: 'online',
             providerId: 'netease',
             mediaId: String(normalized.id),
@@ -265,6 +267,9 @@ export const neteaseProvider: OnlineMusicProvider = {
     search: {
         async searchSongs(query, limit, offset) {
             const response = await neteaseApi.cloudSearch(query, limit, offset);
+            if (!response?.result || (response.code != null && Number(response.code) !== 200)) {
+                throw new OnlineProviderError('unavailable', 'NetEase search failed', 'netease');
+            }
             const items = (response.result?.songs || []).map(normalizeNeteaseSong);
             const total = Number(response.result?.songCount || items.length);
             return { items, total, hasMore: offset + items.length < total, nextOffset: offset + items.length };

@@ -27,7 +27,7 @@ const errorFields = (error: unknown) => ({
 
 const searchSongs = async (query: string, limit: number, offset: number) => {
     // Reuses the QQ search that already backs lyric matching; only the provider contract is new.
-    const results = await searchQQLyrics(query, Math.floor(offset / Math.max(1, limit)) + 1, limit);
+    const results = await searchQQLyrics(query, Math.floor(offset / Math.max(1, limit)) + 1, limit, { throwOnError: true });
     const items = results.map(normalizeQqSong);
     return { items, hasMore: items.length === limit, nextOffset: offset + items.length };
 };
@@ -272,6 +272,7 @@ export const resolveQqSongCatalogRefs = async (song: UnifiedSong): Promise<Unifi
 };
 
 const getAudioSource = async (song: SongResult, quality: AudioQualityPreference) => {
+    if (!hasQqSession()) return null;
     const songmid = getQqSongMid(song);
     if (!songmid) return null;
     const sourceRef = song.sourceRef?.kind === 'online' && song.sourceRef.providerId === 'qq'

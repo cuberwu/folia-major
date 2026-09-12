@@ -205,6 +205,8 @@ export const restorePlaybackSourceForSong = async (
         return true;
     }
 
+    // A restored session can reach playback before the Web capability probe finishes.
+    await omni.initializeSharedSources();
     const onlineLyricsState = await loadOnlineLyricsState(song);
     if (onlineLyricsState) {
         setCurrentSong(prev => {

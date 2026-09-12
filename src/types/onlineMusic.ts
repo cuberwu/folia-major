@@ -5,6 +5,14 @@ import type { LyricData, ReplayGainInfo, SongResult, UnifiedSong } from '../type
 export type MediaId = string | number;
 export type OnlineProviderId = 'netease' | (string & {});
 export type AudioQualityPreference = 'standard' | 'high' | 'lossless' | 'hires';
+export type OnlinePlaybackRoute = 'native' | 'chksz' | 'linglan';
+export type OnlineSearchRouting = {
+    providers: Record<string, { offset: number; hasMore: boolean; failed?: boolean }>;
+};
+export type AudioSourceOptions = { signal?: AbortSignal; excludeRoutes?: readonly OnlinePlaybackRoute[] };
+export type OnlineSearchPage = ProviderPage<UnifiedSong> & {
+    routing?: OnlineSearchRouting;
+};
 export type ProviderCatalogEntityKind = 'album' | 'artist' | 'playlist';
 
 export interface ProviderCatalogRef {
@@ -23,6 +31,7 @@ export type PlaybackSourceRef =
         mediaId: string;
         variant?: string;
         providerData?: Record<string, JsonValue>;
+        playbackRoute?: OnlinePlaybackRoute;
     }
     | { kind: 'local'; mediaId: string }
     | { kind: 'navidrome'; mediaId: string }
@@ -84,6 +93,9 @@ export interface ProviderAudioSource {
     expiresAt?: number;
     quality: AudioQualityPreference;
     replayGain?: ReplayGainInfo;
+    resolvedRoute?: OnlinePlaybackRoute;
+    fallbackUsed?: boolean;
+    failedRoutes?: OnlinePlaybackRoute[];
 }
 
 export type ProviderSongAvailabilityState = 'playable' | 'unavailable' | 'unknown';

@@ -1,4 +1,5 @@
 import React from 'react';
+import { omni } from '../../../services/onlineMusic/omni';
 import { Disc, Play, Plus } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { UnifiedSong } from '../../../types';
@@ -8,6 +9,7 @@ import { getSizedCoverUrl } from '../../../utils/coverUrl';
 import { getSongUnavailableLabel, isSongUnavailable } from '../../../services/onlineMusic/songAvailability';
 import { canResolveSongCatalogRef } from '../../../services/onlineMusic/catalogRefs';
 import { getProviderSongMetadata } from '../../../services/onlineMusic/songMetadata';
+import { useOnlineProviderAccountStore } from '../../../stores/useOnlineProviderAccountStore';
 
 // src/components/app/search/SearchResultRow.tsx
 
@@ -38,7 +40,7 @@ const SearchResultRow: React.FC<SearchResultRowProps> = ({
     onOpenAlbum,
 }) => {
     const { t } = useTranslation();
-    const isUnavailable = isSongUnavailable(track);
+    const isUnavailable = useOnlineProviderAccountStore(() => isSongUnavailable(track));
     const unavailableLabel = getSongUnavailableLabel(track, t('status.songUnavailableTag'));
     const metadata = getProviderSongMetadata(track);
     const coverUrl = getSizedCoverUrl(metadata.coverUrl, 120);
@@ -91,6 +93,11 @@ const SearchResultRow: React.FC<SearchResultRowProps> = ({
                         >
                             {formatSongName(track)}
                         </button>
+                        {track.sourceRef?.kind === 'online' && (
+                            <span className="shrink-0 rounded-full border border-current/15 px-2 py-0.5 text-[10px] opacity-65">
+                                {omni.getProviderLabel(track.sourceRef.providerId)}
+                            </span>
+                        )}
                         {isUnavailable && (
                             <span className="shrink-0 rounded-full border border-current/10 px-2 py-0.5 text-[10px] opacity-60">
                     {unavailableLabel}

@@ -2,6 +2,7 @@ import type { SongResult } from '../../types';
 import type { ProviderSongAvailability, ProviderSongReplacement } from '../../types/onlineMusic';
 import { getOnlineMusicProviderForSong } from './providerRegistry';
 import { getPlaybackSourceRef } from '../../utils/appPlaybackGuards';
+import { getAudioRoutes } from './playbackRouting';
 
 // src/services/onlineMusic/songAvailability.ts
 
@@ -13,7 +14,10 @@ export const getSongAvailability = (song: SongResult): ProviderSongAvailability 
     if (getPlaybackSourceRef(song).kind !== 'online') return PLAYABLE;
 
     const provider = getOnlineMusicProviderForSong(song);
-    return provider?.playback?.getAvailability?.(song) || UNKNOWN;
+    const availability = provider?.playback?.getAvailability?.(song) || UNKNOWN;
+    // Native catalog restrictions do not describe audio from the available fallback suppliers.
+    return availability.state === 'unavailable' && getAudioRoutes(song).some(route => route !== 'native')
+        ? UNKNOWN : availability;
 };
 
 export const isSongUnavailable = (song: SongResult | null | undefined): boolean => (

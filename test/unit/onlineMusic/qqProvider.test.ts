@@ -519,7 +519,7 @@ describe('qqProvider', () => {
         fetchQQLyricsMock.mockResolvedValue({ lines: [], isWordByWord: true });
 
         const page = await qqProvider.search!.searchSongs('海阔天空', 20, 20);
-        expect(searchQQLyricsMock).toHaveBeenCalledWith('海阔天空', 2, 20);
+        expect(searchQQLyricsMock).toHaveBeenCalledWith('海阔天空', 2, 20, { throwOnError: true });
         expect(page).toMatchObject({ hasMore: false, nextOffset: 21 });
         expect(page.items[0]?.sourceRef).toMatchObject({ providerId: 'qq', mediaId: '003rJSwm3TechU' });
 

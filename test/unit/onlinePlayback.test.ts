@@ -18,6 +18,7 @@ vi.mock('@/services/onlineMusic/resourceCache', () => ({
 vi.mock('@/services/onlineMusic/omni', () => ({
     omni: {
         getAudioSource: sourceMock,
+        getAudioRequestKey: () => undefined,
         getLyrics: lyricsMock,
     },
 }));
@@ -44,6 +45,7 @@ vi.mock('@/utils/onlineLyricsState', async (importOriginal) => ({
 vi.mock('@/services/prefetchService', () => ({
     isUrlValid: isUrlValidMock,
     updatePrefetchedAudioUrl: updatePrefetchedAudioUrlMock,
+    invalidatePrefetchedAudioUrl: vi.fn(),
 }));
 
 vi.mock('@/services/db', () => ({
@@ -54,7 +56,7 @@ vi.mock('@/utils/blobGuards', () => ({
     createSafeObjectUrl: vi.fn(() => 'blob:test'),
 }));
 
-import { loadOnlineSongAudioSource, loadOnlineSongLyrics } from '@/services/onlinePlayback';
+import { getOnlineAudioRecoveryOptions, loadOnlineSongAudioSource, loadOnlineSongLyrics } from '@/services/onlinePlayback';
 import { markOnlineLyricsPureMusic } from '@/utils/onlineLyricsState';
 import type { SongResult } from '@/types';
 
@@ -70,6 +72,20 @@ const song: SongResult = {
 };
 
 describe('online audio ReplayGain plumbing', () => {
+    it('remembers failed suppliers across media errors and resets them on a fresh playback', async () => {
+        cachedAudioMock.mockResolvedValue(null);
+        sourceMock.mockResolvedValueOnce({ url: 'https://audio.test/chksz.mp3', fetchedAt: 1, quality: 'high', resolvedRoute: 'chksz', failedRoutes: ['native'] });
+        await loadOnlineSongAudioSource(song, 'high', null);
+        expect(getOnlineAudioRecoveryOptions(song, true).excludeRoutes).toEqual(['native']);
+        const recovery = getOnlineAudioRecoveryOptions(song);
+        expect(recovery.excludeRoutes).toEqual(['native', 'chksz']);
+        sourceMock.mockResolvedValueOnce({ url: 'https://audio.test/linglan.mp3', fetchedAt: 1, quality: 'high', resolvedRoute: 'linglan', failedRoutes: recovery.excludeRoutes });
+        await loadOnlineSongAudioSource(song, 'high', null, { ...recovery, skipCache: true });
+        expect(getOnlineAudioRecoveryOptions(song).excludeRoutes).toEqual(['native', 'chksz', 'linglan']);
+        sourceMock.mockResolvedValueOnce({ url: 'https://audio.test/native.mp3', fetchedAt: 1, quality: 'high', resolvedRoute: 'native', failedRoutes: [] });
+        await loadOnlineSongAudioSource(song, 'high', null);
+        expect(getOnlineAudioRecoveryOptions(song, true).excludeRoutes).toEqual([]);
+    });
     beforeEach(() => {
         vi.clearAllMocks();
         cachedAudioMock.mockResolvedValue(null);
@@ -96,6 +112,7 @@ describe('online audio ReplayGain plumbing', () => {
             'https://audio.test/song.flac',
             'high',
             { trackGain: -12.1, trackPeak: 0.95 },
+            expect.objectContaining({ url: 'https://audio.test/song.flac' }),
         );
     });
 
@@ -103,6 +120,7 @@ describe('online audio ReplayGain plumbing', () => {
         const prefetched = {
             audioUrl: 'https://audio.test/prefetched.flac',
             audioUrlFetchedAt: Date.now(),
+            audioUrlQuality: 'high',
             replayGain: { trackGain: -3.2 },
         } as any;
 
@@ -130,7 +148,7 @@ describe('online audio ReplayGain plumbing', () => {
         if (result.kind === 'ok') {
             expect(result.replayGain).toBeUndefined();
         }
-        expect(updatePrefetchedAudioUrlMock).toHaveBeenCalledWith(song, 'https://audio.test/song.mp3', 'high', undefined);
+        expect(updatePrefetchedAudioUrlMock).toHaveBeenCalledWith(song, 'https://audio.test/song.mp3', 'high', undefined, expect.objectContaining({ url: 'https://audio.test/song.mp3' }));
     });
 });
 

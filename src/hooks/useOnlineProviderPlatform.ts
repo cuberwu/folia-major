@@ -1,13 +1,15 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { omni } from '../services/onlineMusic/omni';
 import { useOnlineProviderAccountStore } from '../stores/useOnlineProviderAccountStore';
 import type { OnlineProviderId, ProviderAccountSummary } from '../types/onlineMusic';
+import { useSearchNavigationStore } from '../stores/useSearchNavigationStore';
 import { useStableCallbacks } from './useStableCallbacks';
 
 // src/hooks/useOnlineProviderPlatform.ts
 
 export type OnlineProviderPlatformState = {
+    defaultSearchSource: OnlineProviderId;
     providers: ProviderAccountSummary[];
     activeProviderId: OnlineProviderId;
     activeProvider: ProviderAccountSummary | undefined;
@@ -66,6 +68,8 @@ export const useOnlineProviderPlatform = (
     prepareSwitch?: (currentProviderId: OnlineProviderId, nextProviderId: OnlineProviderId) => Promise<boolean>,
     logouts: Partial<Record<OnlineProviderId, () => Promise<void>>> = {},
 ): OnlineProviderPlatformState => {
+    const defaultSearchSource = useSearchNavigationStore(state => state.lastOnlineSearchSource);
+    useEffect(() => { void omni.initializeSharedSources(); }, []);
     const { accounts, activeProviderId, setActiveProviderId } = useOnlineProviderAccountStore(useShallow(state => ({
         accounts: state.accounts,
         activeProviderId: state.activeProviderId,
@@ -104,7 +108,7 @@ export const useOnlineProviderPlatform = (
     // in it changed. The callbacks get a permanent identity first so they cannot invalidate it.
     const actions = useStableCallbacks({ switchProvider, refreshProvider, logoutProvider, completeLogin });
     return useMemo(
-        () => ({ providers, activeProviderId, activeProvider, ...actions }),
-        [providers, activeProviderId, activeProvider, actions],
+        () => ({ providers, activeProviderId, activeProvider, defaultSearchSource, ...actions }),
+        [providers, activeProviderId, activeProvider, defaultSearchSource, actions],
     );
 };

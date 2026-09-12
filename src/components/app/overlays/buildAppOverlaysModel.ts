@@ -82,7 +82,7 @@ export type AppOverlaysDeps = {
     theme: any;
     closeSearchView: () => void;
     handleSearchOverlaySubmit: SearchOverlayProps['onSubmitSearch'];
-    handleSearchLoadMore: () => Promise<void>;
+    handleSearchLoadMore: (retryProvider?: string) => Promise<void>;
     handleSearchResultPlay: (track: UnifiedSong) => void;
     handleSearchResultAddToQueue: (track: UnifiedSong) => void;
     handleSearchResultArtistOpen: SearchOverlayProps['onOpenArtist'];

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AlertCircle, Loader2, Search, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -11,7 +11,6 @@ import {
 } from '../../../stores/useSearchNavigationStore';
 import SearchResultsList from './SearchResultsList';
 import { useCollectionNavigationStore } from '../../../stores/useCollectionNavigationStore';
-import { useOnlineProviderAccountStore } from '../../../stores/useOnlineProviderAccountStore';
 import { omni } from '../../../services/onlineMusic/omni';
 
 // src/components/app/search/SearchWorkspace.tsx
@@ -21,7 +20,7 @@ type SearchWorkspaceProps = {
     isDaylight: boolean;
     onClose: () => void;
     onSubmitSearch: (source?: SearchSource) => void;
-    onLoadMore: () => void;
+    onLoadMore: (retryProvider?: string) => void;
     onPlayTrack: (track: UnifiedSong) => void;
     onAddTrackToQueue: (track: UnifiedSong) => void;
     onOpenArtist: (track: UnifiedSong, artistName: string, artistId?: MediaId, entityId?: string) => void;
@@ -48,6 +47,7 @@ const SearchWorkspace: React.FC<SearchWorkspaceProps> = ({
         isSearching,
         isLoadingMore,
         searchError,
+        routing,
         hasMore,
         scrollTop,
         setSearchQuery,
@@ -60,16 +60,17 @@ const SearchWorkspace: React.FC<SearchWorkspaceProps> = ({
         isSearching: state.isSearching,
         isLoadingMore: state.isLoadingMore,
         searchError: state.searchError,
+        routing: state.routing,
         hasMore: state.hasMore,
         scrollTop: state.scrollTop,
         setSearchQuery: state.setSearchQuery,
         setSearchScrollTop: state.setSearchScrollTop,
     })));
     const results = searchResults || [];
-    const activeOnlineProviderId = useOnlineProviderAccountStore(state => state.activeProviderId);
-    const sources = useMemo<SearchSource[]>(() => [activeOnlineProviderId, 'local', 'navidrome'], [activeOnlineProviderId]);
+    const sources: SearchSource[] = ['aggregate', 'netease', 'kugou', 'qq', 'local', 'navidrome'];
     const hasCollection = useCollectionNavigationStore(state => Boolean(state.snapshot?.stack.length));
     const getSourceLabel = (source: SearchSource) => {
+        if (source === 'aggregate') return t('search.sourceAggregate');
         if (source === 'local') return t('search.sourceLocal');
         if (source === 'navidrome') return t('search.sourceNavidrome');
         return omni.getProviderLabel(source);
@@ -144,12 +145,13 @@ const SearchWorkspace: React.FC<SearchWorkspaceProps> = ({
                                 <button
                                     type="button"
                                     key={source}
+                                    aria-pressed={source === searchSourceTab}
                                     onClick={() => {
                                         if (source !== searchSourceTab) {
                                             onSubmitSearch(source);
                                         }
                                     }}
-                                    className={`rounded-full px-4 py-2 text-xs font-medium transition-colors ${
+                                    className={`shrink-0 whitespace-nowrap rounded-full px-4 py-2 text-xs font-medium transition-colors ${
                                         source === searchSourceTab
                                             ? 'shadow-sm'
                                             : isDaylight
@@ -165,6 +167,16 @@ const SearchWorkspace: React.FC<SearchWorkspaceProps> = ({
                                 </button>
                             ))}
                         </nav>
+                        {routing && Object.entries(routing.providers).some(([, cursor]) => cursor.failed) && (
+                            <div role="status" className="flex flex-wrap items-center gap-2 text-xs">
+                                {Object.entries(routing.providers).filter(([, cursor]) => cursor.failed).map(([provider]) => (
+                                    <button key={provider} type="button" disabled={isLoadingMore} onClick={() => onLoadMore(provider)}
+                                        className="rounded-full border border-current/15 px-3 py-2 disabled:opacity-50">
+                                        {t('search.providerFailed', { provider: omni.getProviderLabel(provider) })} · {t('search.retry')}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
                     </header>
 
                     <div className="mx-auto mt-3 min-h-0 w-full max-w-5xl flex-1">
@@ -208,7 +220,7 @@ const SearchWorkspace: React.FC<SearchWorkspaceProps> = ({
                                         <button
                                             type="button"
                                             disabled={isLoadingMore}
-                                            onClick={onLoadMore}
+                                            onClick={() => onLoadMore()}
                                             className="rounded-full border border-current/15 px-4 py-2 disabled:opacity-50"
                                         >
                                             {t('search.retry')}
@@ -219,7 +231,7 @@ const SearchWorkspace: React.FC<SearchWorkspaceProps> = ({
                                         <button
                                             type="button"
                                             disabled={isLoadingMore}
-                                            onClick={onLoadMore}
+                                            onClick={() => onLoadMore()}
                                             className={`rounded-full border px-5 py-2 text-sm disabled:opacity-50 ${
                                                 isDaylight
                                                     ? 'border-black/10 bg-black/5 hover:bg-black/10'

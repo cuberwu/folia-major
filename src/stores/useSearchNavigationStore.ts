@@ -1,17 +1,27 @@
 import { create } from 'zustand';
 import { getNavidromeConfig, navidromeApi } from '../services/navidromeService';
 import type { HomeViewTab, LocalSong, SongResult, UnifiedSong } from '../types';
-import type { OnlineProviderId } from '../types/onlineMusic';
+import type { OnlineProviderId, OnlineSearchRouting } from '../types/onlineMusic';
+import { useOnlineProviderAccountStore } from './useOnlineProviderAccountStore';
 import {
     applyLocalLibraryEntityDisplay,
     buildUnifiedLocalSong,
     type LocalLibraryDisplayCatalog,
 } from '../services/playbackAdapters';
+import { uniqueSearchSongs } from '../services/onlineMusic/aggregateSearch';
 import { omni } from '../services/onlineMusic/omni';
 import { isLocalPlaybackSong, isNavidromePlaybackSong } from '../utils/appPlaybackGuards';
 
 const LAST_HOME_VIEW_TAB_KEY = 'last_home_view_tab';
 const DEFAULT_SEARCH_LIMIT = 30;
+const ONLINE_SEARCH_KEY = 'folia_online_search_source';
+const normalizeSource = (source: string): SearchSource => source === 'chksz:netease' ? 'netease' : source;
+const initialOnlineSource = (): SearchSource => {
+    const saved = typeof localStorage !== 'undefined' && localStorage.getItem(ONLINE_SEARCH_KEY);
+    return saved && ['aggregate', 'netease', 'kugou', 'qq'].includes(saved) ? saved : 'aggregate';
+};
+const allSearchProvidersFailed = (routing?: OnlineSearchRouting) => Boolean(routing
+    && Object.values(routing.providers).every(cursor => cursor.failed));
 export type SearchSource = OnlineProviderId | 'local' | 'navidrome';
 export type SearchReturnView = 'home' | 'player';
 
@@ -22,12 +32,14 @@ type SearchExecutorDeps = {
 };
 
 type SearchExecutionResult = {
+    routing?: OnlineSearchRouting;
     results: UnifiedSong[];
     hasMore: boolean;
     nextOffset: number;
 };
 
 type SearchCacheEntry = {
+    routing?: OnlineSearchRouting;
     results: UnifiedSong[];
     offset: number;
     hasMore: boolean;
@@ -35,6 +47,8 @@ type SearchCacheEntry = {
 };
 
 interface SearchNavigationState {
+    routing?: OnlineSearchRouting;
+    lastOnlineSearchSource: SearchSource;
     homeViewTab: HomeViewTab;
     searchQuery: string;
     searchSourceTab: SearchSource;
@@ -57,7 +71,7 @@ interface SearchNavigationState {
     hideSearchOverlay: () => void;
     resetRuntime: (onlineProviderId?: OnlineProviderId) => void;
     submitSearch: (payload: { query?: string; sourceTab: SearchSource; deps: SearchExecutorDeps; returnView?: SearchReturnView; }) => Promise<boolean>;
-    loadMoreSearchResults: (payload: { deps: SearchExecutorDeps; }) => Promise<void>;
+    loadMoreSearchResults: (payload: { deps: SearchExecutorDeps; retryProvider?: OnlineProviderId; }) => Promise<void>;
 }
 
 const getSearchCacheKey = (query: string, sourceTab: SearchSource) => (
@@ -69,18 +83,18 @@ export const resolveSearchSource = (tab: HomeViewTab | SearchSource): SearchSour
         return tab;
     }
     if (tab !== 'playlist' && tab !== 'albums' && tab !== 'radio') return tab as OnlineProviderId;
-    return 'netease';
+    return useSearchNavigationStore.getState().lastOnlineSearchSource;
 };
 
 export const resolveCommandPaletteSearchSource = (
     currentSong: SongResult | null,
     searchSourceTab: SearchSource,
-    activeOnlineProviderId: OnlineProviderId,
+    _activeOnlineProviderId: OnlineProviderId,
 ): SearchSource => {
+    if (useSearchNavigationStore.getState().isSearchOpen) return searchSourceTab;
     if (currentSong && isLocalPlaybackSong(currentSong)) return 'local';
     if (currentSong && isNavidromePlaybackSong(currentSong)) return 'navidrome';
-    if (currentSong || searchSourceTab === 'netease') return activeOnlineProviderId;
-    return searchSourceTab;
+    return useSearchNavigationStore.getState().lastOnlineSearchSource;
 };
 
 const mapLocalSongToUnifiedSong = (
@@ -142,9 +156,11 @@ const searchOnlineProviderSongs = async (
     query: string,
     limit: number,
     offset: number,
+    routing?: OnlineSearchRouting,
+    retryProvider?: OnlineProviderId,
 ): Promise<SearchExecutionResult> => {
-    const page = await omni.searchProviderSongs(providerId, query, { limit, offset });
-    return { results: page.items, hasMore: page.hasMore, nextOffset: page.nextOffset };
+    const page = await omni.searchSourceSongs(providerId, query, { limit, offset }, routing, retryProvider);
+    return { results: page.items, hasMore: page.hasMore, nextOffset: page.nextOffset, routing: page.routing };
 };
 
 const executeSearch = async (
@@ -152,7 +168,9 @@ const executeSearch = async (
     sourceTab: SearchSource,
     offset: number,
     limit: number,
-    deps: SearchExecutorDeps
+    deps: SearchExecutorDeps,
+    routing?: OnlineSearchRouting,
+    retryProvider?: OnlineProviderId,
 ): Promise<SearchExecutionResult> => {
     if (sourceTab === 'local') {
         return searchLocalSongs(deps, query);
@@ -162,7 +180,7 @@ const executeSearch = async (
         return searchNavidromeSongs(query);
     }
 
-    return searchOnlineProviderSongs(sourceTab, query, limit, offset);
+    return searchOnlineProviderSongs(sourceTab, query, limit, offset, routing, retryProvider);
 };
 
 const getInitialHomeViewTab = (): HomeViewTab => {
@@ -178,7 +196,8 @@ const getInitialHomeViewTab = (): HomeViewTab => {
 export const useSearchNavigationStore = create<SearchNavigationState>((set, get) => ({
     homeViewTab: getInitialHomeViewTab(),
     searchQuery: '',
-    searchSourceTab: 'netease',
+    searchSourceTab: initialOnlineSource(),
+    lastOnlineSearchSource: initialOnlineSource(),
     searchResults: null,
     searchReturnView: 'home',
     isSearchOpen: false,
@@ -212,8 +231,11 @@ export const useSearchNavigationStore = create<SearchNavigationState>((set, get)
         };
     }),
     restoreSearch: ({ query, sourceTab, returnView = 'home' }) => set(state => {
+        sourceTab = normalizeSource(sourceTab);
         const cached = state.searchCache[getSearchCacheKey(query, sourceTab)];
         return {
+            requestId: state.requestId + 1,
+            routing: cached?.routing,
             searchQuery: query,
             searchSourceTab: sourceTab,
             searchReturnView: returnView,
@@ -228,9 +250,11 @@ export const useSearchNavigationStore = create<SearchNavigationState>((set, get)
         };
     }),
     hideSearchOverlay: () => set({ isSearchOpen: false, searchReturnView: 'home' }),
-    resetRuntime: (onlineProviderId) => set(state => ({
+    resetRuntime: (_onlineProviderId) => set(state => ({
+        routing: undefined,
+        searchCache: {},
         searchQuery: '',
-        searchSourceTab: onlineProviderId ?? state.searchSourceTab,
+        searchSourceTab: state.searchSourceTab,
         searchResults: null,
         searchReturnView: 'home',
         isSearchOpen: false,
@@ -243,14 +267,20 @@ export const useSearchNavigationStore = create<SearchNavigationState>((set, get)
         scrollTop: 0,
     })),
     submitSearch: async ({ query, sourceTab, deps, returnView = 'home' }) => {
+        sourceTab = normalizeSource(sourceTab);
         const trimmedQuery = (query ?? get().searchQuery).trim();
         if (!trimmedQuery) {
             return false;
         }
 
+        if (['aggregate', 'netease', 'kugou', 'qq'].includes(sourceTab)) {
+            if (typeof localStorage !== 'undefined') localStorage.setItem(ONLINE_SEARCH_KEY, sourceTab);
+            set({ lastOnlineSearchSource: sourceTab });
+        }
         const requestId = get().requestId + 1;
         set({
             searchQuery: trimmedQuery,
+            routing: undefined,
             searchSourceTab: sourceTab,
             searchReturnView: returnView,
             isSearchOpen: true,
@@ -267,9 +297,11 @@ export const useSearchNavigationStore = create<SearchNavigationState>((set, get)
         try {
             const result = await executeSearch(trimmedQuery, sourceTab, 0, get().limit, deps);
             if (get().requestId !== requestId) {
-                return true;
+                return false;
             }
             set(state => ({
+                routing: result.routing,
+                searchError: allSearchProvidersFailed(result.routing) ? 'search_failed' : null,
                 searchResults: result.results,
                 hasMore: result.hasMore,
                 offset: result.nextOffset,
@@ -277,6 +309,7 @@ export const useSearchNavigationStore = create<SearchNavigationState>((set, get)
                 searchCache: {
                     ...state.searchCache,
                     [getSearchCacheKey(trimmedQuery, sourceTab)]: {
+                        routing: result.routing,
                         results: result.results,
                         hasMore: result.hasMore,
                         offset: result.nextOffset,
@@ -288,7 +321,7 @@ export const useSearchNavigationStore = create<SearchNavigationState>((set, get)
         } catch (error) {
             console.error('[SearchStore] submitSearch failed:', error);
             if (get().requestId !== requestId) {
-                return true;
+                return false;
             }
             set({
                 searchResults: [],
@@ -300,7 +333,7 @@ export const useSearchNavigationStore = create<SearchNavigationState>((set, get)
             return true;
         }
     },
-    loadMoreSearchResults: async ({ deps }) => {
+    loadMoreSearchResults: async ({ deps, retryProvider }) => {
         const {
             searchQuery,
             searchSourceTab,
@@ -310,12 +343,13 @@ export const useSearchNavigationStore = create<SearchNavigationState>((set, get)
             isLoadingMore,
             offset,
             limit,
+            routing,
         } = get();
 
         if (
             searchSourceTab === 'local'
             || searchSourceTab === 'navidrome'
-            || !hasMore
+            || (!hasMore && !retryProvider)
             || isSearching
             || isLoadingMore
             || !searchQuery.trim()
@@ -327,13 +361,16 @@ export const useSearchNavigationStore = create<SearchNavigationState>((set, get)
         set({ isLoadingMore: true, searchError: null });
 
         try {
-            const result = await executeSearch(searchQuery, searchSourceTab, offset, limit, deps);
+            const result = await executeSearch(searchQuery, searchSourceTab, offset, limit, deps, routing, retryProvider);
             if (get().requestId !== requestId) {
                 return;
             }
             set(state => {
-                const results = [...(searchResults || []), ...result.results];
+                const results = uniqueSearchSongs([...(searchResults || []), ...result.results]);
                 return {
+                    routing: result.routing,
+                    searchError: results.length === 0 && allSearchProvidersFailed(result.routing) ? 'search_failed' : null,
+                    scrollTop: state.scrollTop,
                     searchResults: results,
                     hasMore: result.hasMore,
                     offset: result.nextOffset,
@@ -341,6 +378,7 @@ export const useSearchNavigationStore = create<SearchNavigationState>((set, get)
                     searchCache: {
                         ...state.searchCache,
                         [getSearchCacheKey(searchQuery, searchSourceTab)]: {
+                            routing: result.routing,
                             results,
                             hasMore: result.hasMore,
                             offset: result.nextOffset,
@@ -360,3 +398,15 @@ export const useSearchNavigationStore = create<SearchNavigationState>((set, get)
         }
     },
 }));
+
+// Keep displayed results stable, but invalidate account-bound pages and in-flight requests on login/logout.
+useOnlineProviderAccountStore.subscribe((state, previous) => {
+    const identities = (accounts: typeof state.accounts) => JSON.stringify(Object.entries(accounts)
+        .filter(([, account]) => account.status === 'authenticated')
+        .map(([id, account]) => [id, account.user?.id]));
+    if (identities(state.accounts) === identities(previous.accounts)) return;
+    useSearchNavigationStore.setState(search => ({
+        searchCache: {}, requestId: search.requestId + 1, hasMore: false,
+        isSearching: false, isLoadingMore: false, routing: undefined,
+    }));
+});

@@ -90,7 +90,7 @@ function detectIsQrc(content: string): boolean {
 /**
  * Searches songs on QQ Music.
  */
-export async function searchQQLyrics(keyword: string, page = 1, pageSize = 20): Promise<SongResult[]> {
+export async function searchQQLyrics(keyword: string, page = 1, pageSize = 20, options: { throwOnError?: boolean } = {}): Promise<SongResult[]> {
   const safeKeyword = keyword.trim();
   if (!safeKeyword) return [];
 
@@ -142,6 +142,7 @@ export async function searchQQLyrics(keyword: string, page = 1, pageSize = 20): 
     });
   } catch (error) {
     console.error('[QQMusic] Search failed:', error);
+    if (options.throwOnError) throw error;
     return [];
   }
 }

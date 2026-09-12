@@ -1,18 +1,20 @@
 import { Search } from 'lucide-react';
 import type { SearchSource } from '../../../stores/useSearchNavigationStore';
 import type { CommandPaletteCommand, CommandPaletteContext, CommandPaletteSearchSource } from '../types';
+import { omni } from '../../../services/onlineMusic/omni';
 
 // src/components/command-palette/commands/searchCommands.ts
 // Commands in the `search` group: run a query against one music source and navigate to results.
 
 const getSearchSourceLabel = (sourceTab: SearchSource, context: CommandPaletteContext) => {
+    if (sourceTab === 'aggregate') return context.shared.t('search.sourceAggregate');
     if (sourceTab === 'local') {
         return context.shared.t('commandPalette.sourceLocal', 'local library');
     }
     if (sourceTab === 'navidrome') {
         return context.shared.t('commandPalette.sourceNavidrome', 'Navidrome');
     }
-    return context.shared.t('commandPalette.sourceNetease', 'NetEase Cloud Music');
+    return omni.getProviderLabel(sourceTab);
 };
 
 const buildSearchPreview = (
@@ -82,9 +84,8 @@ const createSearchCommand = (
     description,
     keywords,
     ...options,
-    // Only the current-source variant is offered in-app; the rest stay reachable for tests
-    // and for callers that match without a context.
-    isAvailable: context => !context || id === 'search-current',
+    // Online catalog searches are independent of the account selected in the library.
+    isAvailable: context => !context || !['search-local', 'search-navidrome'].includes(id),
     icon: Search,
     placeholder: () => `${keywords[0]} ${description}`,
     requiresInput: true,
@@ -102,4 +103,7 @@ export const searchCommands: CommandPaletteCommand[] = [
     createSearchCommand('search-local', 'Search local songs', 'Search local library', ['local', 'local search', 'search local', '本地', '本地音乐'], () => 'local'),
     createSearchCommand('search-navidrome', 'Search Navidrome songs', 'Search Navidrome library', ['navi', 'navidrome', 'search navidrome', '导航', '服务器'], () => 'navidrome'),
     createSearchCommand('search-netease', 'Search NetEase songs', 'Search NetEase Cloud Music', ['netease', 'cloud', 'search netease', '网易云', '网抑云'], () => 'netease'),
+    createSearchCommand('search-aggregate', 'Search all platforms', 'Search NetEase, KuGou and QQ Music', ['aggregate', 'all music', '聚合搜索'], () => 'aggregate'),
+    createSearchCommand('search-kugou', 'Search KuGou', 'Search KuGou songs', ['KuGou Music', '酷狗'], () => 'kugou'),
+    createSearchCommand('search-qq', 'Search QQ Music', 'Search QQ Music songs', ['qq', 'QQ音乐'], () => 'qq'),
 ];

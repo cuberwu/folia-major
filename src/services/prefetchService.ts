@@ -10,7 +10,7 @@ import { migrateLyricDataRenderHints } from '../utils/lyrics/renderHints';
 import { isPureMusicLyricText } from '../utils/lyrics/pureMusic';
 import { autoMatchBestLyric } from '../utils/lyrics/autoMatchBestLyric';
 import { loadOnlineLyricsState, markOnlineLyricsPureMusic, resolveOnlineLyrics, saveOnlineLyricsState } from '../utils/onlineLyricsState';
-import type { AudioQualityPreference, MediaId } from '../types/onlineMusic';
+import type { AudioQualityPreference, MediaId, ProviderAudioSource } from '../types/onlineMusic';
 import { getPlaybackSourceRef } from '../utils/appPlaybackGuards';
 import { omni } from './onlineMusic/omni';
 import { getSongResourceCacheKey } from './onlineMusic/resourceKeys';
@@ -80,7 +80,12 @@ export interface PrefetchedSongData {
     songId: MediaId;
     audioUrl: string | null;
     audioUrlFetchedAt: number;
+    audioUrlExpiresAt?: number;
     audioUrlQuality: string | null; // Track which quality the URL was fetched for
+    audioRequestKey?: string;
+    resolvedRoute?: ProviderAudioSource['resolvedRoute'];
+    fallbackUsed?: boolean;
+    failedRoutes?: ProviderAudioSource['failedRoutes'];
     replayGain?: ReplayGainInfo;
     lyrics: LyricData | null;
     lyricRaw: {
@@ -98,6 +103,17 @@ const prefetchCache = new Map<string, PrefetchedSongData>();
 
 const getPrefetchSongKey = (song: SongResult): string => getSongResourceCacheKey('audio', song);
 
+export function invalidatePrefetchedAudioUrl(song: SongResult): void {
+    const cached = prefetchCache.get(getPrefetchSongKey(song));
+    if (!cached || cached.audioUrl === 'CACHED_IN_DB') return;
+    cached.audioUrl = null;
+    cached.audioUrlQuality = null;
+    cached.audioUrlExpiresAt = undefined;
+    cached.resolvedRoute = undefined;
+    cached.fallbackUsed = false;
+    cached.failedRoutes = undefined;
+}
+
 const touchPrefetchCacheEntry = (songKey: string, data: PrefetchedSongData): PrefetchedSongData => {
     prefetchCache.delete(songKey);
     prefetchCache.set(songKey, data);
@@ -109,8 +125,8 @@ let currentPrefetchAbortController: AbortController | null = null;
 /**
  * Check if a prefetched URL is still valid (not expired)
  */
-export const isUrlValid = (fetchedAt: number): boolean => {
-    return Date.now() - fetchedAt < URL_TTL_MS;
+export const isUrlValid = (fetchedAt: number, expiresAt?: number): boolean => {
+    return Date.now() - fetchedAt < URL_TTL_MS && (expiresAt === undefined || Date.now() < expiresAt);
 };
 
 /**
@@ -137,8 +153,16 @@ export const getPrefetchedData = (song: SongResult, requiredQuality?: AudioQuali
     // song every time the queue moves.
     const hasUrl = Boolean(cached.audioUrl) && cached.audioUrl !== 'CACHED_IN_DB';
 
+    if (hasUrl && cached.audioRequestKey !== omni.getAudioRequestKey(song)) {
+        cached.audioUrl = null;
+        cached.audioUrlQuality = null;
+        cached.replayGain = undefined;
+        cached.resolvedRoute = undefined;
+        cached.fallbackUsed = false;
+    }
+
     // Check if URL is expired
-    if (hasUrl && !isUrlValid(cached.audioUrlFetchedAt)) {
+    if (hasUrl && !isUrlValid(cached.audioUrlFetchedAt, cached.audioUrlExpiresAt)) {
         console.log(`[Prefetch] URL expired for song ${songId}, will refetch`);
         cached.audioUrl = null;
         cached.audioUrlQuality = null;
@@ -182,7 +206,8 @@ const prefetchSong = async (
     const songKey = getPrefetchSongKey(song);
 
     // Check if already prefetched with valid URL
-    const existing = prefetchCache.get(songKey);
+    const existing = getPrefetchedData(song, audioQuality);
+    const audioRequestKey = omni.getAudioRequestKey(song);
     if (existing?.audioUrl && existing.audioUrl !== 'CACHED_IN_DB') {
         existing.audioUrl = toSafePlaybackUrl(existing.audioUrl) ?? null;
     }
@@ -204,6 +229,11 @@ const prefetchSong = async (
         audioUrl: existing?.audioUrl && existing.audioUrlQuality === audioQuality && isUrlValid(existing.audioUrlFetchedAt) ? existing.audioUrl : null,
         audioUrlFetchedAt: existing?.audioUrlFetchedAt || 0,
         audioUrlQuality: existing?.audioUrlQuality || null,
+        audioRequestKey,
+        resolvedRoute: existing?.resolvedRoute,
+        audioUrlExpiresAt: existing?.audioUrlExpiresAt,
+        failedRoutes: existing?.failedRoutes,
+        fallbackUsed: existing?.fallbackUsed,
         replayGain: existing?.replayGain ?? song.replayGain,
         lyrics: existing?.lyrics || null,
         lyricRaw: existing?.lyricRaw || null,
@@ -220,12 +250,16 @@ const prefetchSong = async (
                 data.audioUrl = 'CACHED_IN_DB';
                 data.audioUrlFetchedAt = Date.now();
             } else if (!signal.aborted) {
-                const audioSource = await omni.getAudioSource(song, audioQuality);
+                const audioSource = await omni.getAudioSource(song, audioQuality, { signal });
                 const url = toSafePlaybackUrl(audioSource?.url) ?? null;
                 if (url) {
                     data.audioUrl = url;
                     data.audioUrlFetchedAt = Date.now();
                     data.audioUrlQuality = audioQuality;
+                    data.resolvedRoute = audioSource?.resolvedRoute;
+                    data.failedRoutes = audioSource?.failedRoutes;
+                    data.audioUrlExpiresAt = audioSource?.expiresAt;
+                    data.fallbackUsed = audioSource?.fallbackUsed;
                     data.replayGain = audioSource?.replayGain
                         ? { ...data.replayGain, ...audioSource.replayGain }
                         : data.replayGain;
@@ -356,6 +390,7 @@ const prefetchSong = async (
         }
     }
 
+    if (signal.aborted || audioRequestKey !== omni.getAudioRequestKey(song)) return;
     prefetchCache.delete(songKey);
 
     // Evict least recently used entries if cache exceeds limit
@@ -381,6 +416,7 @@ export const updatePrefetchedAudioUrl = (
     audioUrl: string,
     audioQuality: string,
     replayGain?: ReplayGainInfo,
+    source?: Pick<ProviderAudioSource, 'resolvedRoute' | 'fallbackUsed' | 'expiresAt' | 'failedRoutes'>,
 ): void => {
     const songKey = getPrefetchSongKey(song);
     const existing = prefetchCache.get(songKey);
@@ -391,6 +427,11 @@ export const updatePrefetchedAudioUrl = (
         audioUrl,
         audioUrlFetchedAt: Date.now(),
         audioUrlQuality: audioQuality,
+        audioRequestKey: omni.getAudioRequestKey(song),
+        resolvedRoute: source?.resolvedRoute,
+        failedRoutes: source?.failedRoutes,
+        audioUrlExpiresAt: source?.expiresAt,
+        fallbackUsed: source?.fallbackUsed,
         replayGain: replayGain
             ? { ...song.replayGain, ...existing?.replayGain, ...replayGain }
             : existing?.replayGain ?? song.replayGain,

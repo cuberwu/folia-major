@@ -1,6 +1,7 @@
 import type { SongResult, UnifiedSong } from '../../types';
 import type {
     AudioQualityPreference,
+    AudioSourceOptions,
     MediaId,
     OmniAudioSource,
     OmniChorusRange,
@@ -16,6 +17,8 @@ import type {
     OmniSongReplacement,
     OmniUser,
     OnlineMusicProvider,
+    OnlineSearchPage,
+    OnlineSearchRouting,
     PersonalFmRequestOptions,
     ProviderCatalogEntityKind,
     QrLoginMethod,
@@ -34,6 +37,11 @@ import {
     requireOnlineMusicProvider,
 } from './providerRegistry';
 import { saveProviderAccountSnapshot } from './providerAccountCache';
+import { discoverChksz } from './chkszTransport';
+import { getAudioRequestKey, resolveAudioWithFallback } from './playbackRouting';
+import { discoverLinglan } from './linglanAdapter';
+import { searchAggregate } from './aggregateSearch';
+import { getSongAvailability as resolveSongAvailability } from './songAvailability';
 
 // src/services/onlineMusic/omni.ts
 // Online Music Network Interface (Omni) - a unified interface for interacting with multiple online music providers.
@@ -102,6 +110,23 @@ const withActiveProvider = async <T>(run: (provider: OnlineMusicProvider) => Pro
 };
 
 export const omni = {
+    async initializeSharedSources(): Promise<void> {
+        const [chksz, linglan] = await Promise.all([discoverChksz(), discoverLinglan()]);
+        const state = useOnlineProviderAccountStore.getState();
+        state.setChkszConfigured(chksz);
+        state.setLinglanConfigured(linglan);
+    },
+
+    getAudioRequestKey,
+
+    async searchSourceSongs(sourceId: string, query: string, page: PageInput, previous?: OnlineSearchRouting, retryProvider?: OmniProviderId): Promise<OnlineSearchPage> {
+        if (sourceId === 'aggregate') return searchAggregate(
+            (providerId, offset) => this.searchProviderSongs(providerId, query, { limit: 10, offset }), previous, retryProvider,
+        );
+        // Old browser history can still refer to the removed ChKSz search tab.
+        return this.searchProviderSongs(sourceId === 'chksz:netease' ? 'netease' : sourceId, query, page);
+    },
+
     invalidateActiveRequests(): void {
         activeRequestGeneration += 1;
     },
@@ -439,8 +464,11 @@ export const omni = {
         return Boolean(providerForSong(song).playback);
     },
 
-    async getAudioSource(song: SongResult, quality: AudioQualityPreference): Promise<OmniAudioSource | null> {
-        const source = await (providerForSong(song).playback?.getAudioSource(song, quality) ?? null);
+    async getAudioSource(song: SongResult, quality: AudioQualityPreference, options?: AudioSourceOptions): Promise<OmniAudioSource | null> {
+        const provider = providerForSong(song);
+        const nativeAudio = () => provider.getAvailability?.().configured === false
+            ? Promise.resolve(null) : provider.playback?.getAudioSource(song, quality) ?? Promise.resolve(null);
+        const source = await resolveAudioWithFallback(song, quality, nativeAudio, options);
         // Written here rather than at either caller because this is the only moment a provider ever
         // states a track's ReplayGain, and both callers - the prefetch pass and playback itself -
         // may be the one that happens to see it. See getCachedSongReplayGain for what is lost
@@ -479,7 +507,7 @@ export const omni = {
     },
 
     getSongAvailability(song: SongResult): OmniSongAvailability {
-        return providerForSong(song).playback?.getAvailability?.(song) ?? { state: 'unknown' };
+        return resolveSongAvailability(song);
     },
 
     async getSongReplacement(song: SongResult): Promise<OmniSongReplacement | null> {

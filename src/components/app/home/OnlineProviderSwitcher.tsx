@@ -142,15 +142,25 @@ const OnlineProviderSwitcher: React.FC<OnlineProviderSwitcherProps> = ({
                 <button
                     type="button"
                     onClick={() => setOpen(value => !value)}
-                    className={`flex items-center rounded-full gap-0 py-1 pl-1 pr-1 transition-all ${showProviderLabel ? 'md:gap-2 md:pr-3' : 'md:gap-0 md:pr-1'} ${isDaylight ? 'hover:bg-black/5' : 'hover:bg-white/10'}`}
+                    className={`flex items-center rounded-full gap-0 py-1 pl-1 pr-1 transition-all ${showProviderLabel && activeProvider.user ? 'md:gap-2 md:pr-3' : 'md:gap-0 md:pr-1'} ${isDaylight ? 'hover:bg-black/5' : 'hover:bg-white/10'}`}
                     title={t('home.switchOnlineProvider')}
                     aria-label={t('home.switchOnlineProvider')}
                     aria-haspopup="menu"
                     aria-expanded={open}
                 >
-                    <ProviderAvatar provider={activeProvider} className="h-9 w-9 shrink-0 rounded-full md:h-10 md:w-10" />
+                    {activeProvider.user ? (
+                        <ProviderAvatar provider={activeProvider} className="h-9 w-9 shrink-0 rounded-full md:h-10 md:w-10" />
+                    ) : (
+                        <span
+                            role="img"
+                            aria-label={t('account.guestMode')}
+                            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full md:h-10 md:w-10 ${isDaylight ? 'bg-black/10' : 'bg-white/10'}`}
+                        >
+                            <UserRound size={20} aria-hidden="true" />
+                        </span>
+                    )}
                     <AnimatePresence initial={false}>
-                        {showProviderLabel && (
+                        {showProviderLabel && activeProvider.user && (
                             <motion.span
                                 initial={{ width: 0, opacity: 0 }}
                                 animate={{ width: 'auto', opacity: 1 }}

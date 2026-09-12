@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import type { MotionValue } from 'framer-motion';
-import { applyOnlineAudioSourceMetadata, loadOnlineSongAudioSource, loadOnlineSongLyrics } from '../services/onlinePlayback';
+import { cancelOnlineAudioLoad, applyOnlineAudioSourceMetadata, loadOnlineSongAudioSource, loadOnlineSongLyrics } from '../services/onlinePlayback';
 import { getSongReplacement, isSongUnavailable } from '../services/onlineMusic/songAvailability';
 import { getSongResourceCacheKey } from '../services/onlineMusic/resourceKeys';
 import { omni } from '../services/onlineMusic/omni';
@@ -55,6 +55,7 @@ type SearchDeps = {
         returnView?: SearchReturnView;
     }) => Promise<boolean>;
     loadMoreSearchResults: (args: {
+        retryProvider?: string;
         deps: {
             localSongs: LocalSong[];
             localLibraryCatalog?: LocalLibraryDisplayCatalog;
@@ -457,6 +458,7 @@ export function usePlaybackQueueController({
             }
         }
 
+        cancelOnlineAudioLoad();
         const playbackRequestId = ++playbackRequestIdRef.current;
         const isLatestPlaybackRequest = () => playbackRequestIdRef.current === playbackRequestId;
         const isLocal = isLocalPlaybackSong(song);
@@ -558,6 +560,7 @@ export function usePlaybackQueueController({
                 return;
             }
         } catch (error) {
+            if (!isLatestPlaybackRequest() || error instanceof Error && error.name === 'AbortError') return;
             console.error('[App] Failed to fetch song URL:', error);
             setStatusMsg({ type: 'error', text: t('status.playbackError') });
             setIsLyricsLoading(false);
@@ -771,8 +774,9 @@ export function usePlaybackQueueController({
         t,
     ]);
 
-    const handleSearchLoadMore = useCallback(async () => {
+    const handleSearchLoadMore = useCallback(async (retryProvider?: string) => {
         await searchDeps.loadMoreSearchResults({
+            retryProvider,
             deps: {
                 localSongs,
                 localLibraryCatalog,

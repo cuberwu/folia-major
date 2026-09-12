@@ -3,6 +3,8 @@ import generateTheme from '/app/api/generate-theme.js';
 import generateOpenAiTheme from '/app/api/generate-theme_openai.js';
 import lyricProxy from '/app/api/lyric-proxy.js';
 import segmentLyrics from '/app/api/segment-lyrics.js';
+import { handleChksz } from '/app/shared/chkszService.mjs';
+import { handleLinglan } from '/app/shared/linglanService.mjs';
 
 // 当前文件：把现有 Vercel 风格处理器装配为 Docker 常驻 HTTP 服务。
 //
@@ -78,6 +80,8 @@ app.all('/api/generate-theme', jsonBody, generateTheme);
 app.all('/api/generate-theme_openai', rawBody, fromEdge(generateOpenAiTheme));
 app.all('/api/segment-lyrics', rawBody, fromEdge(segmentLyrics));
 app.all('/api/lyric-proxy', jsonBody, textBody, lyricProxy);
+app.all('/api/chksz/:operation', rawBody, fromEdge(handleChksz));
+app.all('/api/linglan/:operation', rawBody, fromEdge(handleLinglan));
 
 app.use((error, _req, res, _next) => {
     console.error('[folia-web-api] Unhandled request error:', error);

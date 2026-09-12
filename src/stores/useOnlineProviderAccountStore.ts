@@ -17,6 +17,10 @@ export interface OnlineProviderAccountState {
 }
 
 type OnlineProviderAccountStore = {
+    chkszConfigured: boolean;
+    linglanConfigured: boolean;
+    setLinglanConfigured: (configured: boolean) => void;
+    setChkszConfigured: (configured: boolean) => void;
     accounts: Record<string, OnlineProviderAccountState>;
     activeProviderId: OnlineProviderId;
     setActiveProviderId: (providerId: OnlineProviderId) => void;
@@ -88,6 +92,10 @@ const placeCloudCollectionSecond = (collections: ProviderCollection[]): Provider
 };
 
 export const useOnlineProviderAccountStore = create<OnlineProviderAccountStore>(set => ({
+    chkszConfigured: false,
+    linglanConfigured: false,
+    setLinglanConfigured: linglanConfigured => set({ linglanConfigured }),
+    setChkszConfigured: chkszConfigured => set({ chkszConfigured }),
     accounts: {},
     activeProviderId: getInitialProviderId(),
     setActiveProviderId: providerId => {
